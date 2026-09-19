@@ -1,12 +1,16 @@
 #ifndef _TCIRCLES3_AUDIO_CODEC_H
 #define _TCIRCLES3_AUDIO_CODEC_H
 
+#include <mutex>
 #include "audio_codec.h"
 
 #include <esp_codec_dev.h>
 #include <esp_codec_dev_defaults.h>
 
 class Tcamerapluss3AudioCodec : public AudioCodec {
+private:
+    std::mutex data_if_mutex_;
+
 private:
     const audio_codec_data_if_t *data_if_ = nullptr;
     const audio_codec_ctrl_if_t *out_ctrl_if_ = nullptr;

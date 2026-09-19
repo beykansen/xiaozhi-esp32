@@ -1,5 +1,7 @@
 #include "tcamerapluss3_audio_codec.h"
 
+#include <vector>
+
 #include <esp_log.h>
 #include <driver/i2c_master.h>
 #include <driver/i2s_tdm.h>
@@ -8,6 +10,8 @@
 #include "config.h"
 
 static const char TAG[] = "Tcamerapluss3AudioCodec";
+
+constexpr uint32_t I2S_TRANSFER_TIMEOUT_MS = 1000;
 
 Tcamerapluss3AudioCodec::Tcamerapluss3AudioCodec(int input_sample_rate, int output_sample_rate,
     gpio_num_t mic_bclk, gpio_num_t mic_ws, gpio_num_t mic_data,
@@ -133,17 +137,40 @@ void Tcamerapluss3AudioCodec::SetOutputVolume(int volume) {
 }
 
 void Tcamerapluss3AudioCodec::EnableInput(bool enable) {
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    if (enable == input_enabled_) {
+        return;
+    }
+    if (enable) {
+        ESP_ERROR_CHECK(i2s_channel_enable(rx_handle_));
+    } else {
+        ESP_ERROR_CHECK(i2s_channel_disable(rx_handle_));
+    }
     AudioCodec::EnableInput(enable);
 }
 
 void Tcamerapluss3AudioCodec::EnableOutput(bool enable) {
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    if (enable == output_enabled_) {
+        return;
+    }
+    if (enable) {
+        ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));
+    } else {
+        ESP_ERROR_CHECK(i2s_channel_disable(tx_handle_));
+    }
     AudioCodec::EnableOutput(enable);
 }
 
 int Tcamerapluss3AudioCodec::Read(int16_t *dest, int samples) {
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
     if (input_enabled_) {
-        size_t bytes_read;
-        i2s_channel_read(rx_handle_, dest, samples * sizeof(int16_t), &bytes_read, portMAX_DELAY);
+        size_t bytes_read = 0;
+        esp_err_t err = i2s_channel_read(rx_handle_, dest, samples * sizeof(int16_t), &bytes_read, I2S_TRANSFER_TIMEOUT_MS);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "I2S read failed: %s", esp_err_to_name(err));
+            return 0;
+        }
         
         // 麦克风接收音量放大20倍（限制在 int16_t 范围内防止溢出）
         int16_t *ptr = dest;
@@ -156,14 +183,18 @@ int Tcamerapluss3AudioCodec::Read(int16_t *dest, int samples) {
 }
 
 int Tcamerapluss3AudioCodec::Write(const int16_t *data, int samples){
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
     if (output_enabled_){
-        size_t bytes_read;
-        auto output_data = (int16_t *)malloc(samples * sizeof(int16_t));
-        for (size_t i = 0; i < samples; i++){
+        size_t bytes_written = 0;
+        std::vector<int16_t> output_data(samples);
+        for (int i = 0; i < samples; i++){
             output_data[i] = (float)data[i] * (float)(volume_ / 100.0);
         }
-        i2s_channel_write(tx_handle_, output_data, samples * sizeof(int16_t), &bytes_read, portMAX_DELAY);
-        free(output_data);
+        esp_err_t err = i2s_channel_write(tx_handle_, output_data.data(), samples * sizeof(int16_t), &bytes_written, I2S_TRANSFER_TIMEOUT_MS);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "I2S write failed: %s", esp_err_to_name(err));
+            return 0;
+        }
     }
     return samples;
 }

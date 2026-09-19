@@ -1,6 +1,7 @@
 #include "wifi_board.h"
 #include "tcamerapluss3_audio_codec.h"
 #include "display/lcd_display.h"
+#include "buddy_display.h"
 #include "application.h"
 #include "button.h"
 #include "config.h"
@@ -10,46 +11,26 @@
 #include "pin_config.h"
 #include "esp_video.h"
 #include "ir_filter_controller.h"
+#include "settings.h"
+#include "system_info.h"
+#include "assets/lang_config.h"
 
 #include <esp_log.h>
 #include <esp_lcd_panel_vendor.h>
 #include <driver/i2c_master.h>
+#include <esp_lcd_touch_cst816s.h>
+#include <esp_lvgl_port.h>
+#include <thread>
 
 #define TAG "LilygoTCameraPlusS3Board"
 
-class Cst816x : public I2cDevice {
-public:
-    struct TouchPoint_t {
-        int num = 0;
-        int x = -1;
-        int y = -1;
-    };
-
-    Cst816x(i2c_master_bus_handle_t i2c_bus, uint8_t addr) : I2cDevice(i2c_bus, addr) {
-        uint8_t chip_id = ReadReg(0xA7);
-        ESP_LOGI(TAG, "Get chip ID: 0x%02X", chip_id);
-        read_buffer_ = new uint8_t[6];
-    }
-
-    ~Cst816x() {
-        delete[] read_buffer_;
-    }
-
-    void UpdateTouchPoint() {
-        ReadRegs(0x02, read_buffer_, 6);
-        tp_.num = read_buffer_[0] & 0x0F;
-        tp_.x = ((read_buffer_[1] & 0x0F) << 8) | read_buffer_[2];
-        tp_.y = ((read_buffer_[3] & 0x0F) << 8) | read_buffer_[4];
-    }
-
-    const TouchPoint_t &GetTouchPoint() {
-        return tp_;
-    }
-
-private:
-    uint8_t *read_buffer_ = nullptr;
-    TouchPoint_t tp_;
-};
+constexpr const char* AIBUDDY_SETTINGS_NAMESPACE = "aibuddy";
+constexpr const char* SLEEP_SECONDS_KEY = "sleep_seconds";
+constexpr int DEFAULT_SLEEP_SECONDS = 60;
+constexpr const char* OTA_PATH_SUFFIX = "/ota/";
+constexpr const char* CONVERSATION_RESET_PATH = "/conversation/reset";
+constexpr const char* CHAT_CLEARED_MESSAGE = "Chat cleared";
+constexpr const char* CHAT_CLEAR_FAILED_MESSAGE = "Chat clear failed";
 
 class Pmic : public Sy6970 {
 public:
@@ -67,7 +48,7 @@ public:
 class LilygoTCameraPlusS3Board : public WifiBoard {
 private:
     i2c_master_bus_handle_t i2c_bus_;
-    Cst816x *cst816d_;
+    esp_lcd_touch_handle_t touch_ = nullptr;
     Pmic* pmic_;
     LcdDisplay *display_;
     Button boot_button_;
@@ -76,10 +57,10 @@ private:
     EspVideo* camera_;
 
     void InitializePowerSaveTimer() {
-        power_save_timer_ = new PowerSaveTimer(-1, 60, -1);
+        power_save_timer_ = new PowerSaveTimer(-1, GetSleepSeconds(), -1);
         power_save_timer_->OnEnterSleepMode([this]() {
             GetDisplay()->SetPowerSaveMode(true);
-            GetBacklight()->SetBrightness(10);
+            GetBacklight()->SetBrightness(0);
         });
         power_save_timer_->OnExitSleepMode([this]() {
             GetDisplay()->SetPowerSaveMode(false);
@@ -129,34 +110,43 @@ private:
         }
     }
 
-    static void TouchpadDaemon(void *param) {
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        auto &board = (LilygoTCameraPlusS3Board&)Board::GetInstance();
-        auto touchpad = board.GetTouchpad();
-        bool was_touched = false;
-        while (1) {
-            touchpad->UpdateTouchPoint();
-            if (touchpad->GetTouchPoint().num > 0){
-                // On press
-                if (!was_touched) {
-                    was_touched = true;
-                    Application::GetInstance().ToggleChatState();
-                }
-            }
-            // On release
-            else if (was_touched) {
-                was_touched = false;
-            }
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
-        vTaskDelete(NULL);
+    void InitializeTouch() {
+        esp_lcd_panel_io_i2c_config_t tp_io_config = {};
+        tp_io_config.dev_addr = ESP_LCD_TOUCH_IO_I2C_CST816S_ADDRESS;
+        tp_io_config.scl_speed_hz = 400 * 1000;
+        tp_io_config.control_phase_bytes = 1;
+        tp_io_config.dc_bit_offset = 0;
+        tp_io_config.lcd_cmd_bits = 8;
+        tp_io_config.lcd_param_bits = 0;
+        tp_io_config.flags.disable_control_phase = 1;
+        esp_lcd_panel_io_handle_t tp_io_handle = nullptr;
+        ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(i2c_bus_, &tp_io_config, &tp_io_handle));
+
+        esp_lcd_touch_config_t tp_cfg = {
+            .x_max = DISPLAY_WIDTH,
+            .y_max = DISPLAY_HEIGHT,
+            .rst_gpio_num = TP_RST,
+            .int_gpio_num = GPIO_NUM_NC,
+            .levels = {
+                .reset = 0,
+                .interrupt = 0,
+            },
+            .flags = {
+                .swap_xy = DISPLAY_SWAP_XY,
+                .mirror_x = DISPLAY_MIRROR_X,
+                .mirror_y = DISPLAY_MIRROR_Y,
+            },
+        };
+        ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_cst816s(tp_io_handle, &tp_cfg, &touch_));
+
+        const lvgl_port_touch_cfg_t touch_cfg = {
+            .disp = lv_display_get_default(),
+            .handle = touch_,
+        };
+        lvgl_port_add_touch(&touch_cfg);
+        ESP_LOGI(TAG, "Touch registered as LVGL input device");
     }
 
-    void InitCst816d() {
-        ESP_LOGI(TAG, "Init CST816x");
-        cst816d_ = new Cst816x(i2c_bus_, CST816_ADDRESS);
-        xTaskCreate(TouchpadDaemon, "tp", 2048, NULL, 5, NULL);
-    }
 
     void InitSpi() {
         spi_bus_config_t buscfg = {};
@@ -202,25 +192,35 @@ private:
         ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y));
         ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel, true));
 
-        display_ = new SpiLcdDisplay(panel_io, panel,
+        auto buddy_display = new BuddyDisplay(panel_io, panel,
                                      DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+        buddy_display->SetControls({
+            .get_sleep_seconds = [this]() { return GetSleepSeconds(); },
+            .set_sleep_seconds = [this](int seconds) { SetSleepSeconds(seconds); },
+            .wake_up = [this]() { power_save_timer_->WakeUp(); },
+        });
+        display_ = buddy_display;
     }
 
     void InitializeButtons() {
         boot_button_.OnClick([this]() {
             power_save_timer_->WakeUp();
             auto& app = Application::GetInstance();
-            // During startup (before connected), pressing BOOT button enters Wi-Fi config mode without reboot
             if (app.GetDeviceState() == kDeviceStateStarting) {
                 EnterWifiConfigMode();
                 return;
             }
-            app.ToggleChatState();
+            ResetConversation();
         });
         key1_button_.OnClick([this]() {
-            if (camera_) {
-                camera_->Capture();
+            if (power_save_timer_->IsInSleepMode()) {
+                power_save_timer_->WakeUp();
+            } else {
+                power_save_timer_->EnterSleepMode();
             }
+        });
+        key1_button_.OnLongPress([this]() {
+            pmic_->PowerOff();
         });
     }
 
@@ -277,15 +277,54 @@ private:
         static IrFilterController irFilter(AP1511B_GPIO);
     }
 
+    int GetSleepSeconds() {
+        Settings settings(AIBUDDY_SETTINGS_NAMESPACE, false);
+        return settings.GetInt(SLEEP_SECONDS_KEY, DEFAULT_SLEEP_SECONDS);
+    }
+
+    void SetSleepSeconds(int seconds) {
+        Settings settings(AIBUDDY_SETTINGS_NAMESPACE, true);
+        settings.SetInt(SLEEP_SECONDS_KEY, seconds);
+        power_save_timer_->SetSecondsToSleep(seconds);
+        ESP_LOGI(TAG, "Sleep timeout set to %d seconds", seconds);
+    }
+
+    std::string BridgeUrl(const char* path) {
+        std::string url = CONFIG_OTA_URL;
+        auto suffix = url.rfind(OTA_PATH_SUFFIX);
+        if (suffix != std::string::npos) {
+            url.erase(suffix);
+        }
+        return url + path;
+    }
+
+    void ResetConversation() {
+        std::thread([this]() {
+            auto http = GetNetwork()->CreateHttp(0);
+            http->SetHeader("Device-Id", SystemInfo::GetMacAddress());
+            http->SetHeader("Content-Type", "application/json");
+            http->SetContent("{}");
+            auto url = BridgeUrl(CONVERSATION_RESET_PATH);
+            bool ok = false;
+            if (auto opened = http->Open("POST", url); opened) {
+                auto status = http->GetStatusCode();
+                ok = status && *status == 200;
+                http->Close();
+            }
+            ESP_LOGI(TAG, "Conversation reset via %s: %s", url.c_str(), ok ? "ok" : "failed");
+            GetDisplay()->ShowNotification(ok ? CHAT_CLEARED_MESSAGE : CHAT_CLEAR_FAILED_MESSAGE);
+        }).detach();
+    }
+
 public:
     LilygoTCameraPlusS3Board() : boot_button_(BOOT_BUTTON_GPIO), key1_button_(KEY1_BUTTON_GPIO) {
         InitializePowerSaveTimer();
         InitI2c();
         InitSy6970();
-        InitCst816d();
         I2cDetect();
         InitSpi();
         InitializeSt7789Display();
+        InitializeTouch();
         InitializeButtons();
         InitializeCamera();
         InitializeTools();
@@ -312,9 +351,9 @@ public:
 
     virtual bool GetBatteryLevel(int &level, bool& charging, bool& discharging) override {
         static bool last_discharging = false;
-        charging = pmic_->IsCharging();
-        bool is_power_good = pmic_->IsPowerGood();
-        discharging = !charging && is_power_good;
+        bool on_external_power = pmic_->IsPowerGood();
+        charging = on_external_power;
+        discharging = !on_external_power;
         if (discharging != last_discharging) {
             power_save_timer_->SetEnabled(discharging);
             last_discharging = discharging;
@@ -334,10 +373,6 @@ public:
     virtual Backlight* GetBacklight() override {
         static PwmBacklight backlight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
         return &backlight;
-    }
-
-    Cst816x *GetTouchpad() {
-        return cst816d_;
     }
 
     virtual Camera* GetCamera() override {

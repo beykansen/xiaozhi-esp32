@@ -6,6 +6,12 @@ config OTA_URL
     help
         The application will access this URL to check for new firmwares and server address.
 
+config WIFI_AP_SSID_PREFIX
+    string "WiFi provisioning hotspot SSID prefix"
+    default "Xiaozhi"
+    help
+        Prefix of the SoftAP SSID and hostname used during WiFi provisioning. The last two MAC bytes are appended.
+
 choice
     prompt "Flash Assets"
     default FLASH_DEFAULT_ASSETS if !USE_EMOTE_MESSAGE_STYLE
