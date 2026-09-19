@@ -34,6 +34,10 @@ int Sy6970::GetBatteryVoltage() {
     return value * 20 + 2304;
 }
 
+int Sy6970::GetChargeCurrent() {
+    return (ReadReg(0x12) & 0x7F) * 50;
+}
+
 int Sy6970::GetChargeTargetVoltage() {
     uint8_t value = ReadReg(0x06);
     value = (value & 0xFC) >> 2;

@@ -16,6 +16,7 @@
 #include "assets/lang_config.h"
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <esp_lcd_panel_vendor.h>
 #include <driver/i2c_master.h>
 #include <esp_lcd_touch_cst816s.h>
@@ -31,6 +32,14 @@ constexpr const char* OTA_PATH_SUFFIX = "/ota/";
 constexpr const char* CONVERSATION_RESET_PATH = "/conversation/reset";
 constexpr const char* CHAT_CLEARED_MESSAGE = "Chat cleared";
 constexpr const char* CHAT_CLEAR_FAILED_MESSAGE = "Chat clear failed";
+constexpr int64_t BATTERY_LOG_INTERVAL_US = 5 * 60 * 1000 * 1000LL;
+constexpr uint8_t SY6970_REG_INPUT_CURRENT_LIMIT = 0x00;
+constexpr uint8_t SY6970_REG_CHARGE_CURRENT = 0x04;
+constexpr int SY6970_INPUT_LIMIT_OFFSET_MA = 100;
+constexpr int SY6970_INPUT_LIMIT_STEP_MA = 50;
+constexpr int SY6970_CHARGE_CURRENT_STEP_MA = 64;
+constexpr int USB_INPUT_CURRENT_LIMIT_MA = 1500;
+constexpr int BATTERY_CHARGE_CURRENT_MA = 1100;
 
 class Pmic : public Sy6970 {
 public:
@@ -42,6 +51,16 @@ public:
         WriteReg(0x00, 0B00001000); // Disable ILIM pin
         WriteReg(0x02, 0B11011101); // Enable ADC measurement function
         WriteReg(0x07, 0B10001101); // Disable watchdog timer feeding function
+        WriteReg(SY6970_REG_INPUT_CURRENT_LIMIT, InputCurrentLimitRegister(USB_INPUT_CURRENT_LIMIT_MA));
+        WriteReg(SY6970_REG_CHARGE_CURRENT, ChargeCurrentRegister(BATTERY_CHARGE_CURRENT_MA));
+    }
+
+    static uint8_t InputCurrentLimitRegister(int milliamps) {
+        return static_cast<uint8_t>((milliamps - SY6970_INPUT_LIMIT_OFFSET_MA) / SY6970_INPUT_LIMIT_STEP_MA);
+    }
+
+    static uint8_t ChargeCurrentRegister(int milliamps) {
+        return static_cast<uint8_t>(milliamps / SY6970_CHARGE_CURRENT_STEP_MA);
     }
 };
 
@@ -360,7 +379,20 @@ public:
         }
 
         level = pmic_->GetBatteryLevel();
+        LogBatteryStatus(level, on_external_power);
         return true;
+    }
+
+    void LogBatteryStatus(int level, bool on_external_power) {
+        static int64_t last_log_us = -BATTERY_LOG_INTERVAL_US;
+        int64_t now_us = esp_timer_get_time();
+        if (now_us - last_log_us < BATTERY_LOG_INTERVAL_US) {
+            return;
+        }
+        last_log_us = now_us;
+        ESP_LOGI(TAG, "Battery: %d mV, level %d%%, charge current %d mA, external power %s, charging %s, charge done %s",
+                 pmic_->GetBatteryVoltage(), level, pmic_->GetChargeCurrent(), on_external_power ? "yes" : "no",
+                 pmic_->IsCharging() ? "yes" : "no", pmic_->IsChargingDone() ? "yes" : "no");
     }
 
     virtual void SetPowerSaveLevel(PowerSaveLevel level) override {

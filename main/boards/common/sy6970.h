@@ -10,11 +10,12 @@ public:
     bool IsPowerGood();
     bool IsChargingDone();
     int GetBatteryLevel();
+    int GetBatteryVoltage();
+    int GetChargeCurrent();
     void PowerOff();
 
 private:
     int GetChangingStatus();
-    int GetBatteryVoltage();
     int GetChargeTargetVoltage();
 };
 
