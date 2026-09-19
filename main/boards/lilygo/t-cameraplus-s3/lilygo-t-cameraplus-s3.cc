@@ -14,6 +14,8 @@
 #include "settings.h"
 #include "system_info.h"
 #include "assets/lang_config.h"
+#include "wifi_manager.h"
+#include "mcp_server.h"
 
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -22,6 +24,8 @@
 #include <esp_lcd_touch_cst816s.h>
 #include <esp_lvgl_port.h>
 #include <thread>
+#include <esp_app_desc.h>
+#include <esp_heap_caps.h>
 
 #define TAG "LilygoTCameraPlusS3Board"
 
@@ -68,6 +72,7 @@ class LilygoTCameraPlusS3Board : public WifiBoard {
 private:
     i2c_master_bus_handle_t i2c_bus_;
     esp_lcd_touch_handle_t touch_ = nullptr;
+    BuddyDisplay* buddy_display_ = nullptr;
     Pmic* pmic_;
     LcdDisplay *display_;
     Button boot_button_;
@@ -217,29 +222,44 @@ private:
             .get_sleep_seconds = [this]() { return GetSleepSeconds(); },
             .set_sleep_seconds = [this](int seconds) { SetSleepSeconds(seconds); },
             .wake_up = [this]() { power_save_timer_->WakeUp(); },
+            .get_status_lines = [this]() { return GetStatusLines(); },
         });
+        buddy_display_ = buddy_display;
         display_ = buddy_display;
     }
 
     void InitializeButtons() {
         boot_button_.OnClick([this]() {
-            power_save_timer_->WakeUp();
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
                 EnterWifiConfigMode();
                 return;
             }
-            ResetConversation();
-        });
-        key1_button_.OnClick([this]() {
             if (power_save_timer_->IsInSleepMode()) {
                 power_save_timer_->WakeUp();
             } else {
                 power_save_timer_->EnterSleepMode();
             }
         });
+        key1_button_.OnClick([this]() {
+            if (power_save_timer_->IsInSleepMode()) {
+                power_save_timer_->WakeUp();
+                return;
+            }
+            power_save_timer_->WakeUp();
+            if (buddy_display_->OnMainButtonClick() || buddy_display_->IsBusy()) {
+                return;
+            }
+            auto& app = Application::GetInstance();
+            if (app.GetDeviceState() == kDeviceStateListening) {
+                app.StopListening();
+            } else {
+                app.StartListening();
+            }
+        });
         key1_button_.OnLongPress([this]() {
-            pmic_->PowerOff();
+            power_save_timer_->WakeUp();
+            buddy_display_->OnMainButtonLongPress();
         });
     }
 
@@ -294,6 +314,49 @@ private:
 
     void InitializeTools() {
         static IrFilterController irFilter(AP1511B_GPIO);
+        auto& mcp_server = McpServer::GetInstance();
+        mcp_server.AddTool("self.battery.get_status",
+            "Get the battery voltage in millivolts, charge level percent, charge current in milliamps and whether the device runs on external (USB) power.",
+            PropertyList(), [this](const PropertyList& properties) -> ReturnValue {
+                auto json = cJSON_CreateObject();
+                cJSON_AddNumberToObject(json, "voltage_mv", pmic_->GetBatteryVoltage());
+                cJSON_AddNumberToObject(json, "level_percent", pmic_->GetBatteryLevel());
+                cJSON_AddNumberToObject(json, "charge_current_ma", pmic_->GetChargeCurrent());
+                cJSON_AddBoolToObject(json, "external_power", pmic_->IsPowerGood());
+                cJSON_AddBoolToObject(json, "charging", pmic_->IsCharging());
+                cJSON_AddBoolToObject(json, "charge_done", pmic_->IsChargingDone());
+                return json;
+            });
+        mcp_server.AddTool("self.screen.sleep",
+            "Turn the screen off and put the device into sleep mode. The user wakes it by touching the screen or pressing a button.",
+            PropertyList(), [this](const PropertyList& properties) -> ReturnValue {
+                power_save_timer_->EnterSleepMode();
+                return true;
+            });
+        mcp_server.AddTool("self.screen.wake",
+            "Wake the device from sleep mode and turn the screen back on.",
+            PropertyList(), [this](const PropertyList& properties) -> ReturnValue {
+                power_save_timer_->WakeUp();
+                return true;
+            });
+    }
+
+    StatusLines GetStatusLines() {
+        auto& wifi = WifiManager::GetInstance();
+        auto app_desc = esp_app_get_description();
+        StatusLines lines;
+        lines.emplace_back("WiFi", wifi.GetSsid());
+        lines.emplace_back("IP", wifi.GetIpAddress());
+        lines.emplace_back("Signal", std::to_string(wifi.GetRssi()) + " dBm");
+        lines.emplace_back("Battery", std::to_string(pmic_->GetBatteryLevel()) + "% " + std::to_string(pmic_->GetBatteryVoltage()) + " mV");
+        lines.emplace_back("Charging", pmic_->IsChargingDone() ? "done" : pmic_->IsCharging() ? std::to_string(pmic_->GetChargeCurrent()) + " mA" : "no");
+        lines.emplace_back("Power", pmic_->IsPowerGood() ? "USB" : "battery");
+        lines.emplace_back("Board", BOARD_NAME);
+        lines.emplace_back("Firmware", app_desc->version);
+        lines.emplace_back("MAC", SystemInfo::GetMacAddress());
+        lines.emplace_back("Uptime", std::to_string(esp_timer_get_time() / 1000000 / 60) + " min");
+        lines.emplace_back("Free heap", std::to_string(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024) + " KB");
+        return lines;
     }
 
     int GetSleepSeconds() {

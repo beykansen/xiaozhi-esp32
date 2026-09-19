@@ -1297,10 +1297,6 @@ bool Application::CanEnterSleepMode() {
         return false;
     }
 
-    if (protocol_ && protocol_->IsAudioChannelOpened()) {
-        return false;
-    }
-
     if (!audio_service_.IsIdle()) {
         return false;
     }
