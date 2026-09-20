@@ -9,7 +9,7 @@
 #include "i2c_device.h"
 #include "sy6970.h"
 #include "pin_config.h"
-#include "esp_video.h"
+#include "esp32_camera.h"
 #include "ir_filter_controller.h"
 #include "settings.h"
 #include "system_info.h"
@@ -38,6 +38,11 @@ constexpr int STANDBY_BRIGHTNESS = 15;
 constexpr int FULL_BATTERY_PERCENT = 100;
 constexpr int CHARGING_NOT_DONE_MAX_PERCENT = 99;
 constexpr uint16_t MAIN_BUTTON_LONG_PRESS_MS = 350;
+constexpr int CHANNEL_KEEPER_STARTUP_DELAY_MS = 15000;
+constexpr int CHANNEL_KEEPER_INTERVAL_MS = 30000;
+constexpr int CAMERA_SCCB_I2C_PORT = 1;
+constexpr int CAMERA_JPEG_QUALITY = 10;
+constexpr int CAMERA_XCLK_FREQ_HZ = 20000000;
 constexpr const char* OTA_PATH_SUFFIX = "/ota/";
 constexpr const char* CONVERSATION_RESET_PATH = "/conversation/reset";
 constexpr const char* CHAT_CLEARED_MESSAGE = "Chat cleared";
@@ -85,7 +90,7 @@ private:
     Button boot_button_;
     Button key1_button_;
     PowerSaveTimer* power_save_timer_;
-    EspVideo* camera_;
+    Esp32Camera* camera_ = nullptr;
 
     static int ScreenOffSeconds(int sleep_seconds) {
         return sleep_seconds == SLEEP_DISABLED ? SLEEP_DISABLED : sleep_seconds + SCREEN_OFF_DELAY_SECONDS;
@@ -301,52 +306,44 @@ private:
     }
 
     void InitializeCamera() {
-        static esp_cam_ctlr_dvp_pin_config_t dvp_pin_config = {
-            .data_width = CAM_CTLR_DATA_WIDTH_8,
-            .data_io = {
-                [0] = Y2_GPIO_NUM,
-                [1] = Y3_GPIO_NUM,
-                [2] = Y4_GPIO_NUM,
-                [3] = Y5_GPIO_NUM,
-                [4] = Y6_GPIO_NUM,
-                [5] = Y7_GPIO_NUM,
-                [6] = Y8_GPIO_NUM,
-                [7] = Y9_GPIO_NUM,
-            },
-            .vsync_io = VSYNC_GPIO_NUM,
-            .de_io = HREF_GPIO_NUM,
-            .pclk_io = PCLK_GPIO_NUM,
-            .xclk_io = XCLK_GPIO_NUM,
-        };
+        camera_config_t config = {};
+        config.pin_d0 = Y2_GPIO_NUM;
+        config.pin_d1 = Y3_GPIO_NUM;
+        config.pin_d2 = Y4_GPIO_NUM;
+        config.pin_d3 = Y5_GPIO_NUM;
+        config.pin_d4 = Y6_GPIO_NUM;
+        config.pin_d5 = Y7_GPIO_NUM;
+        config.pin_d6 = Y8_GPIO_NUM;
+        config.pin_d7 = Y9_GPIO_NUM;
+        config.pin_xclk = XCLK_GPIO_NUM;
+        config.pin_pclk = PCLK_GPIO_NUM;
+        config.pin_vsync = VSYNC_GPIO_NUM;
+        config.pin_href = HREF_GPIO_NUM;
+        config.pin_sccb_sda = SIOD_GPIO_NUM;
+        config.pin_sccb_scl = SIOC_GPIO_NUM;
+        config.sccb_i2c_port = CAMERA_SCCB_I2C_PORT;
+        config.pin_pwdn = PWDN_GPIO_NUM;
+        config.pin_reset = RESET_GPIO_NUM;
+        config.xclk_freq_hz = CAMERA_XCLK_FREQ_HZ;
+        config.pixel_format = PIXFORMAT_RGB565;
+        config.frame_size = FRAMESIZE_HVGA;
+        config.jpeg_quality = CAMERA_JPEG_QUALITY;
+        config.fb_count = 2;
+        config.fb_location = CAMERA_FB_IN_PSRAM;
+        config.grab_mode = CAMERA_GRAB_LATEST;
+        camera_ = new Esp32Camera(config);
+    }
 
-        esp_video_init_sccb_config_t sccb_config = {
-#ifdef CONFIG_BOARD_TYPE_LILYGO_T_CAMERAPLUS_S3_V1_0_V1_1
-            .init_sccb = false,
-            .i2c_handle = i2c_bus_,
-#elif defined CONFIG_BOARD_TYPE_LILYGO_T_CAMERAPLUS_S3_V1_2
-            .init_sccb = true,
-            .i2c_config = {
-                .port = 1,
-                .scl_pin = SIOC_GPIO_NUM,
-                .sda_pin = SIOD_GPIO_NUM,
-            },
-#endif
-            .freq = 100000,
-        };
+    static void ChannelKeeperTask(void* param) {
+        vTaskDelay(pdMS_TO_TICKS(CHANNEL_KEEPER_STARTUP_DELAY_MS));
+        while (true) {
+            Application::GetInstance().EnsureAudioChannelOpen();
+            vTaskDelay(pdMS_TO_TICKS(CHANNEL_KEEPER_INTERVAL_MS));
+        }
+    }
 
-        esp_video_init_dvp_config_t dvp_config = {
-            .sccb_config = sccb_config,
-            .reset_pin = RESET_GPIO_NUM,
-            .pwdn_pin = PWDN_GPIO_NUM,
-            .dvp_pin = dvp_pin_config,
-            .xclk_freq = XCLK_FREQ_HZ,
-        };
-
-        esp_video_init_config_t video_config = {
-            .dvp = &dvp_config,
-        };
-
-        camera_ = new EspVideo(video_config);
+    void StartChannelKeeper() {
+        xTaskCreate(ChannelKeeperTask, "channel_keeper", 4096, nullptr, 3, nullptr);
     }
 
     void InitializeTools() {
@@ -448,6 +445,7 @@ public:
         InitializeButtons();
         InitializeCamera();
         InitializeTools();
+        StartChannelKeeper();
         GetBacklight()->RestoreBrightness();
     }
 

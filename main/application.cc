@@ -1292,6 +1292,17 @@ void Application::WakeWordInvoke(const std::string& wake_word) {
     }
 }
 
+bool Application::EnsureAudioChannelOpen() {
+    if (!protocol_ || GetDeviceState() != kDeviceStateIdle || protocol_->IsAudioChannelOpened()) {
+        return protocol_ && protocol_->IsAudioChannelOpened();
+    }
+    if (!protocol_->OpenAudioChannel()) {
+        ESP_LOGW(TAG, "Background audio channel open failed");
+        return false;
+    }
+    return true;
+}
+
 bool Application::CanEnterSleepMode() {
     if (GetDeviceState() != kDeviceStateIdle) {
         return false;
