@@ -223,6 +223,7 @@ private:
             .set_sleep_seconds = [this](int seconds) { SetSleepSeconds(seconds); },
             .wake_up = [this]() { power_save_timer_->WakeUp(); },
             .get_status_lines = [this]() { return GetStatusLines(); },
+            .reset_conversation = [this]() { ResetConversation(); },
         });
         buddy_display_ = buddy_display;
         display_ = buddy_display;
@@ -247,19 +248,18 @@ private:
                 return;
             }
             power_save_timer_->WakeUp();
-            if (buddy_display_->OnMainButtonClick() || buddy_display_->IsBusy()) {
-                return;
-            }
-            auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateListening) {
-                app.StopListening();
-            } else {
-                app.StartListening();
-            }
+            buddy_display_->OnMainButtonClick();
         });
         key1_button_.OnLongPress([this]() {
+            if (power_save_timer_->IsInSleepMode()) {
+                power_save_timer_->WakeUp();
+                return;
+            }
             power_save_timer_->WakeUp();
             buddy_display_->OnMainButtonLongPress();
+        });
+        key1_button_.OnPressUp([this]() {
+            buddy_display_->OnMainButtonReleased();
         });
     }
 

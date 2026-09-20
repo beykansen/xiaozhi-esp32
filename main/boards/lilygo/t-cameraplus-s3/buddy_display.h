@@ -35,6 +35,7 @@ struct BuddyControls {
     std::function<void(int)> set_sleep_seconds;
     std::function<void()> wake_up;
     std::function<StatusLines()> get_status_lines;
+    std::function<void()> reset_conversation;
 };
 
 class BuddyDisplay : public SpiLcdDisplay {
@@ -46,6 +47,7 @@ public:
     void SetControls(BuddyControls controls);
     bool OnMainButtonClick();
     void OnMainButtonLongPress();
+    void OnMainButtonReleased();
     bool IsBusy() const { return thinking_ || sleeping_; }
     bool IsChatScreen() const { return screen_ == BuddyScreen::kChat; }
 
@@ -62,7 +64,7 @@ private:
     lv_obj_t* right_eye_ = nullptr;
     lv_obj_t* mouth_ = nullptr;
     lv_obj_t* talk_surface_ = nullptr;
-    lv_obj_t* thinking_spinner_ = nullptr;
+    lv_obj_t* clear_chat_button_ = nullptr;
     lv_obj_t* menu_panel_ = nullptr;
     lv_obj_t* menu_items_[2] = {nullptr, nullptr};
     lv_obj_t* status_panel_ = nullptr;
@@ -83,10 +85,12 @@ private:
     bool stop_listening_pending_ = false;
     bool sleeping_ = false;
     bool thinking_ = false;
+    bool button_listening_ = false;
 
     void CreateFace(lv_obj_t* screen);
     void CreateTalkSurface(lv_obj_t* screen);
-    void CreateThinkingSpinner(lv_obj_t* screen);
+    void CreateClearChatButton(lv_obj_t* screen);
+    void HideStockEmoji();
     lv_obj_t* CreatePanel(lv_obj_t* screen, const char* title);
     void CreateMenuPanel(lv_obj_t* screen);
     void CreateStatusPanel(lv_obj_t* screen);
@@ -96,6 +100,10 @@ private:
     void SetEyes(int width, int height, int offset_x, int offset_y);
     void SetMouth(int width, int height, int offset_y, int radius);
     void StartMouthTalking();
+    void StartThinkingEyes();
+    void StopThinkingEyes();
+    bool BeginListening();
+    void EndListening();
     void StopMouthTalking();
     void Blink();
     void ShowScreen(BuddyScreen screen);
@@ -118,6 +126,7 @@ private:
     static void MenuItemEventCallback(lv_event_t* event);
     static void DarkModeEventCallback(lv_event_t* event);
     static void SleepDropdownEventCallback(lv_event_t* event);
+    static void ClearChatEventCallback(lv_event_t* event);
 };
 
 #endif
