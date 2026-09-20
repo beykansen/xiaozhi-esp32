@@ -479,12 +479,36 @@ public:
             last_discharging = discharging;
         }
 
-        level = pmic_->GetBatteryLevel();
-        if (on_external_power && !pmic_->IsChargingDone() && level >= FULL_BATTERY_PERCENT) {
-            level = CHARGING_NOT_DONE_MAX_PERCENT;
+        if (on_external_power && pmic_->IsChargingDone()) {
+            level = FULL_BATTERY_PERCENT;
+        } else {
+            level = BatteryPercentFromVoltage(pmic_->GetBatteryVoltage());
+            if (on_external_power && level >= FULL_BATTERY_PERCENT) {
+                level = CHARGING_NOT_DONE_MAX_PERCENT;
+            }
         }
         LogBatteryStatus(level, on_external_power);
         return true;
+    }
+
+    static int BatteryPercentFromVoltage(int millivolts) {
+        struct Point { int millivolts; int percent; };
+        static constexpr Point kLipoCurve[] = {
+            {3300, 0}, {3500, 10}, {3600, 20}, {3700, 35}, {3800, 50},
+            {3900, 65}, {4000, 80}, {4100, 92}, {4150, 100},
+        };
+        constexpr int kPoints = sizeof(kLipoCurve) / sizeof(kLipoCurve[0]);
+        if (millivolts <= kLipoCurve[0].millivolts) {
+            return 0;
+        }
+        for (int i = 1; i < kPoints; ++i) {
+            if (millivolts <= kLipoCurve[i].millivolts) {
+                const auto& low = kLipoCurve[i - 1];
+                const auto& high = kLipoCurve[i];
+                return low.percent + (millivolts - low.millivolts) * (high.percent - low.percent) / (high.millivolts - low.millivolts);
+            }
+        }
+        return FULL_BATTERY_PERCENT;
     }
 
     void LogBatteryStatus(int level, bool on_external_power) {
