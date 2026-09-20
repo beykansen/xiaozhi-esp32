@@ -32,6 +32,12 @@
 constexpr const char* AIBUDDY_SETTINGS_NAMESPACE = "aibuddy";
 constexpr const char* SLEEP_SECONDS_KEY = "sleep_seconds";
 constexpr int DEFAULT_SLEEP_SECONDS = 60;
+constexpr int SLEEP_DISABLED = -1;
+constexpr int SCREEN_OFF_DELAY_SECONDS = 30;
+constexpr int STANDBY_BRIGHTNESS = 15;
+constexpr int FULL_BATTERY_PERCENT = 100;
+constexpr int CHARGING_NOT_DONE_MAX_PERCENT = 99;
+constexpr uint16_t MAIN_BUTTON_LONG_PRESS_MS = 350;
 constexpr const char* OTA_PATH_SUFFIX = "/ota/";
 constexpr const char* CONVERSATION_RESET_PATH = "/conversation/reset";
 constexpr const char* CHAT_CLEARED_MESSAGE = "Chat cleared";
@@ -73,6 +79,7 @@ private:
     i2c_master_bus_handle_t i2c_bus_;
     esp_lcd_touch_handle_t touch_ = nullptr;
     BuddyDisplay* buddy_display_ = nullptr;
+    bool screen_off_ = false;
     Pmic* pmic_;
     LcdDisplay *display_;
     Button boot_button_;
@@ -80,20 +87,38 @@ private:
     PowerSaveTimer* power_save_timer_;
     EspVideo* camera_;
 
+    static int ScreenOffSeconds(int sleep_seconds) {
+        return sleep_seconds == SLEEP_DISABLED ? SLEEP_DISABLED : sleep_seconds + SCREEN_OFF_DELAY_SECONDS;
+    }
+
     void InitializePowerSaveTimer() {
-        power_save_timer_ = new PowerSaveTimer(-1, GetSleepSeconds(), -1);
+        int sleep_seconds = GetSleepSeconds();
+        power_save_timer_ = new PowerSaveTimer(-1, sleep_seconds, ScreenOffSeconds(sleep_seconds));
         power_save_timer_->OnEnterSleepMode([this]() {
+            if (buddy_display_ != nullptr && buddy_display_->IsBusy()) {
+                power_save_timer_->WakeUp();
+                return;
+            }
             GetDisplay()->SetPowerSaveMode(true);
-            GetBacklight()->SetBrightness(0);
+            GetBacklight()->SetBrightness(STANDBY_BRIGHTNESS);
         });
         power_save_timer_->OnExitSleepMode([this]() {
+            screen_off_ = false;
             GetDisplay()->SetPowerSaveMode(false);
             GetBacklight()->RestoreBrightness();
         });
         power_save_timer_->OnShutdownRequest([this]() {
-            pmic_->PowerOff();
+            ScreenOff();
         });
         power_save_timer_->SetEnabled(true);
+    }
+
+    void ScreenOff() {
+        if (screen_off_) {
+            return;
+        }
+        screen_off_ = true;
+        GetBacklight()->SetBrightness(0);
     }
 
     void InitI2c(){
@@ -224,6 +249,10 @@ private:
             .wake_up = [this]() { power_save_timer_->WakeUp(); },
             .get_status_lines = [this]() { return GetStatusLines(); },
             .reset_conversation = [this]() { ResetConversation(); },
+            .get_volume = [this]() { return GetAudioCodec()->output_volume(); },
+            .set_volume = [this](int volume) { GetAudioCodec()->SetOutputVolume(volume); },
+            .get_brightness = [this]() { return static_cast<int>(GetBacklight()->brightness()); },
+            .set_brightness = [this](int brightness, bool persist) { GetBacklight()->SetBrightness(brightness, persist); },
         });
         buddy_display_ = buddy_display;
         display_ = buddy_display;
@@ -240,6 +269,7 @@ private:
                 power_save_timer_->WakeUp();
             } else {
                 power_save_timer_->EnterSleepMode();
+                ScreenOff();
             }
         });
         key1_button_.OnClick([this]() {
@@ -375,6 +405,7 @@ private:
         Settings settings(AIBUDDY_SETTINGS_NAMESPACE, true);
         settings.SetInt(SLEEP_SECONDS_KEY, seconds);
         power_save_timer_->SetSecondsToSleep(seconds);
+        power_save_timer_->SetSecondsToShutdown(ScreenOffSeconds(seconds));
         ESP_LOGI(TAG, "Sleep timeout set to %d seconds", seconds);
     }
 
@@ -406,7 +437,7 @@ private:
     }
 
 public:
-    LilygoTCameraPlusS3Board() : boot_button_(BOOT_BUTTON_GPIO), key1_button_(KEY1_BUTTON_GPIO) {
+    LilygoTCameraPlusS3Board() : boot_button_(BOOT_BUTTON_GPIO), key1_button_(KEY1_BUTTON_GPIO, false, MAIN_BUTTON_LONG_PRESS_MS) {
         InitializePowerSaveTimer();
         InitI2c();
         InitSy6970();
@@ -449,6 +480,9 @@ public:
         }
 
         level = pmic_->GetBatteryLevel();
+        if (on_external_power && !pmic_->IsChargingDone() && level >= FULL_BATTERY_PERCENT) {
+            level = CHARGING_NOT_DONE_MAX_PERCENT;
+        }
         LogBatteryStatus(level, on_external_power);
         return true;
     }

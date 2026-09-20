@@ -111,6 +111,10 @@ void PowerSaveTimer::SetSecondsToSleep(int seconds) {
     ticks_ = 0;
 }
 
+void PowerSaveTimer::SetSecondsToShutdown(int seconds) {
+    seconds_to_shutdown_ = seconds;
+}
+
 void PowerSaveTimer::WakeUp() {
     ticks_ = 0;
     if (in_sleep_mode_) {

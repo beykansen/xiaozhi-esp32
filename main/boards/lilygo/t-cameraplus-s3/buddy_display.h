@@ -36,6 +36,10 @@ struct BuddyControls {
     std::function<void()> wake_up;
     std::function<StatusLines()> get_status_lines;
     std::function<void()> reset_conversation;
+    std::function<int()> get_volume;
+    std::function<void(int)> set_volume;
+    std::function<int()> get_brightness;
+    std::function<void(int, bool)> set_brightness;
 };
 
 class BuddyDisplay : public SpiLcdDisplay {
@@ -49,7 +53,7 @@ public:
     void OnMainButtonLongPress();
     void OnMainButtonReleased();
     void OpenMenu();
-    bool IsBusy() const { return thinking_ || sleeping_; }
+    bool IsBusy() const { return thinking_; }
     bool IsChatScreen() const { return screen_ == BuddyScreen::kChat; }
 
     virtual void SetupUI() override;
@@ -65,14 +69,15 @@ private:
     lv_obj_t* right_eye_ = nullptr;
     lv_obj_t* mouth_ = nullptr;
     lv_obj_t* talk_surface_ = nullptr;
-    lv_obj_t* clear_chat_button_ = nullptr;
     lv_obj_t* menu_panel_ = nullptr;
-    lv_obj_t* menu_items_[2] = {nullptr, nullptr};
+    lv_obj_t* menu_items_[3] = {nullptr, nullptr, nullptr};
     lv_obj_t* status_panel_ = nullptr;
     lv_obj_t* status_list_ = nullptr;
     lv_obj_t* settings_panel_ = nullptr;
     lv_obj_t* dark_mode_switch_ = nullptr;
     lv_obj_t* sleep_dropdown_ = nullptr;
+    lv_obj_t* volume_slider_ = nullptr;
+    lv_obj_t* brightness_slider_ = nullptr;
     lv_timer_t* state_timer_ = nullptr;
     lv_timer_t* blink_timer_ = nullptr;
     lv_timer_t* subtitle_timer_ = nullptr;
@@ -90,7 +95,7 @@ private:
 
     void CreateFace(lv_obj_t* screen);
     void CreateTalkSurface(lv_obj_t* screen);
-    void CreateClearChatButton(lv_obj_t* screen);
+    lv_obj_t* CreateSliderRow(lv_obj_t* panel, const char* title, int value, lv_event_cb_t callback);
     void HideStockEmoji();
     lv_obj_t* CreatePanel(lv_obj_t* screen, const char* title);
     void CreateMenuPanel(lv_obj_t* screen);
@@ -101,6 +106,7 @@ private:
     void SetEyes(int width, int height, int offset_x, int offset_y);
     void SetMouth(int width, int height, int offset_y, int radius);
     void StartMouthTalking();
+    void StartSubtitleScroll(const char* content);
     void StartThinkingEyes();
     void StopThinkingEyes();
     bool BeginListening();
@@ -127,7 +133,8 @@ private:
     static void MenuItemEventCallback(lv_event_t* event);
     static void DarkModeEventCallback(lv_event_t* event);
     static void SleepDropdownEventCallback(lv_event_t* event);
-    static void ClearChatEventCallback(lv_event_t* event);
+    static void VolumeEventCallback(lv_event_t* event);
+    static void BrightnessEventCallback(lv_event_t* event);
 };
 
 #endif

@@ -34,7 +34,10 @@ constexpr int kFaceLayerIndex = 1;
 constexpr int kPanelPadding = 12;
 constexpr int kPanelRowGap = 8;
 constexpr int kMenuItemHeight = 64;
-constexpr int kClearButtonSize = 36;
+constexpr int kSliderHeight = 12;
+constexpr int kSliderMax = 100;
+constexpr int kSubtitleHoldMs = 800;
+constexpr int kStandbyBreathMs = 2200;
 constexpr int kThinkingEyeDrift = 7;
 constexpr int kThinkingCycleMs = 650;
 constexpr int kSubtitleMsPerChar = 90;
@@ -48,10 +51,11 @@ constexpr const char* kLightThemeName = "light";
 constexpr const char* kSleepOptions = "Never\n30 s\n1 min\n2 min\n5 min\n10 min";
 constexpr int kSleepOptionSeconds[] = {-1, 30, 60, 120, 300, 600};
 constexpr int kSleepOptionCount = sizeof(kSleepOptionSeconds) / sizeof(kSleepOptionSeconds[0]);
-constexpr int kMenuItemCount = 2;
-constexpr const char* kMenuIcons[kMenuItemCount] = {MATERIAL_SYMBOLS_INFO, MATERIAL_SYMBOLS_SETTINGS};
-constexpr const char* kMenuLabels[kMenuItemCount] = {"Status", "Settings"};
-constexpr BuddyScreen kMenuTargets[kMenuItemCount] = {BuddyScreen::kStatus, BuddyScreen::kSettings};
+constexpr int kMenuItemCount = 3;
+constexpr int kClearChatMenuIndex = 2;
+constexpr const char* kMenuIcons[kMenuItemCount] = {MATERIAL_SYMBOLS_INFO, MATERIAL_SYMBOLS_SETTINGS, MATERIAL_SYMBOLS_DELETE};
+constexpr const char* kMenuLabels[kMenuItemCount] = {"Status", "Settings", "Clear chat"};
+constexpr BuddyScreen kMenuTargets[kMenuItemCount] = {BuddyScreen::kStatus, BuddyScreen::kSettings, BuddyScreen::kChat};
 
 int SleepOptionIndex(int seconds) {
     for (int i = 0; i < kSleepOptionCount; ++i) {
@@ -68,6 +72,10 @@ void SetHeightAnimation(void* var, int32_t value) {
 
 void SetTranslateYAnimation(void* var, int32_t value) {
     lv_obj_set_style_translate_y(static_cast<lv_obj_t*>(var), value, 0);
+}
+
+void SetTranslateXAnimation(void* var, int32_t value) {
+    lv_obj_set_style_translate_x(static_cast<lv_obj_t*>(var), value, 0);
 }
 
 }  // namespace
@@ -100,7 +108,6 @@ void BuddyDisplay::SetupUI() {
     HideStockEmoji();
     CreateFace(screen);
     CreateTalkSurface(screen);
-    CreateClearChatButton(screen);
     CreateMenuPanel(screen);
     CreateStatusPanel(screen);
     CreateSettingsPanel(screen);
@@ -142,24 +149,6 @@ void BuddyDisplay::HideStockEmoji() {
             lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
         }
     }
-}
-
-void BuddyDisplay::CreateClearChatButton(lv_obj_t* screen) {
-    auto lvgl_theme = static_cast<LvglTheme*>(current_theme_);
-    clear_chat_button_ = lv_button_create(screen);
-    lv_obj_set_size(clear_chat_button_, kClearButtonSize, kClearButtonSize);
-    lv_obj_align(clear_chat_button_, LV_ALIGN_TOP_RIGHT, 0, 0);
-    lv_obj_set_style_bg_opa(clear_chat_button_, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_shadow_width(clear_chat_button_, 0, 0);
-    lv_obj_set_style_border_width(clear_chat_button_, 0, 0);
-    lv_obj_set_style_pad_all(clear_chat_button_, 0, 0);
-    lv_obj_move_foreground(clear_chat_button_);
-    auto icon = lv_label_create(clear_chat_button_);
-    lv_label_set_text(icon, MATERIAL_SYMBOLS_DELETE);
-    lv_obj_set_style_text_font(icon, lvgl_theme->icon_font()->font(), 0);
-    lv_obj_set_style_text_opa(icon, LV_OPA_50, 0);
-    lv_obj_center(icon);
-    lv_obj_add_event_cb(clear_chat_button_, ClearChatEventCallback, LV_EVENT_CLICKED, this);
 }
 
 void BuddyDisplay::CreateTalkSurface(lv_obj_t* screen) {
@@ -257,11 +246,27 @@ void BuddyDisplay::CreateSettingsPanel(lv_obj_t* screen) {
     }
     lv_obj_add_event_cb(sleep_dropdown_, SleepDropdownEventCallback, LV_EVENT_VALUE_CHANGED, this);
 
+    volume_slider_ = CreateSliderRow(settings_panel_, "Volume", controls_.get_volume ? controls_.get_volume() : 0, VolumeEventCallback);
+    brightness_slider_ = CreateSliderRow(settings_panel_, "Brightness", controls_.get_brightness ? controls_.get_brightness() : 0, BrightnessEventCallback);
+
     auto hint = lv_label_create(settings_panel_);
     lv_label_set_text(hint, "Hold the main button to go back");
     lv_obj_set_width(hint, LV_PCT(100));
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_opa(hint, LV_OPA_60, 0);
+}
+
+lv_obj_t* BuddyDisplay::CreateSliderRow(lv_obj_t* panel, const char* title, int value, lv_event_cb_t callback) {
+    auto label = lv_label_create(panel);
+    lv_label_set_text(label, title);
+    auto slider = lv_slider_create(panel);
+    lv_obj_set_width(slider, LV_PCT(92));
+    lv_obj_set_height(slider, kSliderHeight);
+    lv_slider_set_range(slider, 0, kSliderMax);
+    lv_slider_set_value(slider, value, LV_ANIM_OFF);
+    lv_obj_add_event_cb(slider, callback, LV_EVENT_VALUE_CHANGED, this);
+    lv_obj_add_event_cb(slider, callback, LV_EVENT_RELEASED, this);
+    return slider;
 }
 
 void BuddyDisplay::ApplyThemeColors() {
@@ -275,7 +280,11 @@ void BuddyDisplay::ApplyThemeColors() {
     }
     lv_obj_set_style_bg_color(mouth_, lv_color_hex(kAccentColor), 0);
     lv_obj_set_style_bg_opa(mouth_, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(clear_chat_button_, lvgl_theme->text_color(), 0);
+    for (auto slider : {volume_slider_, brightness_slider_}) {
+        lv_obj_set_style_bg_color(slider, lv_color_hex(kAccentColor), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(slider, lv_color_hex(kAccentColor), LV_PART_KNOB);
+        lv_obj_set_style_bg_color(slider, lvgl_theme->border_color(), LV_PART_MAIN);
+    }
     HideStockEmoji();
     for (auto panel : {menu_panel_, status_panel_, settings_panel_}) {
         lv_obj_set_style_bg_color(panel, lvgl_theme->background_color(), 0);
@@ -312,13 +321,45 @@ void BuddyDisplay::SetChatMessage(const char* role, const char* content) {
         DisplayLockGuard lock(this);
         lv_timer_pause(subtitle_timer_);
     }
-    LcdDisplay::SetChatMessage(role, content);
+    std::string single_line(content);
+    for (auto& ch : single_line) {
+        if (ch == '\n' || ch == '\r' || ch == '\t') {
+            ch = ' ';
+        }
+    }
+    LcdDisplay::SetChatMessage(role, single_line.c_str());
+    if (sleeping_ && strcmp(role, "assistant") == 0 && controls_.wake_up) {
+        controls_.wake_up();
+    }
     if (chat_message_label_ != nullptr) {
         DisplayLockGuard lock(this);
-        int32_t scroll_ms = static_cast<int32_t>(strlen(content)) * kSubtitleMsPerChar;
-        lv_obj_set_style_anim_duration(chat_message_label_, scroll_ms > kSubtitleMinScrollMs ? scroll_ms : kSubtitleMinScrollMs, 0);
-        lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+        StartSubtitleScroll(single_line.c_str());
     }
+}
+
+void BuddyDisplay::StartSubtitleScroll(const char* content) {
+    lv_anim_delete(chat_message_label_, SetTranslateXAnimation);
+    lv_obj_set_style_translate_x(chat_message_label_, 0, 0);
+    lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_align(chat_message_label_, LV_TEXT_ALIGN_LEFT, 0);
+    auto font = lv_obj_get_style_text_font(chat_message_label_, LV_PART_MAIN);
+    lv_point_t size;
+    lv_text_get_size(&size, content, font, lv_obj_get_style_text_letter_space(chat_message_label_, LV_PART_MAIN), 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    int32_t overflow = size.x - lv_obj_get_width(chat_message_label_);
+    if (overflow <= 0) {
+        lv_obj_set_style_text_align(chat_message_label_, LV_TEXT_ALIGN_CENTER, 0);
+        return;
+    }
+    int32_t scroll_ms = static_cast<int32_t>(strlen(content)) * kSubtitleMsPerChar;
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, chat_message_label_);
+    lv_anim_set_exec_cb(&anim, SetTranslateXAnimation);
+    lv_anim_set_values(&anim, 0, -overflow);
+    lv_anim_set_duration(&anim, scroll_ms > kSubtitleMinScrollMs ? scroll_ms : kSubtitleMinScrollMs);
+    lv_anim_set_delay(&anim, kSubtitleHoldMs);
+    lv_anim_set_path_cb(&anim, lv_anim_path_linear);
+    lv_anim_start(&anim);
 }
 
 void BuddyDisplay::SetPowerSaveMode(bool on) {
@@ -433,10 +474,21 @@ void BuddyDisplay::ApplyMood(FaceMood mood) {
             SetEyes(kEyeWidth + 8, kEyeHeight + 8, 0, -4);
             SetMouth(kMouthOpenHeight, kMouthOpenHeight, kMouthOffsetY, kMouthOpenHeight / 2);
             break;
-        case FaceMood::kSleepy:
+        case FaceMood::kSleepy: {
             SetEyes(kEyeWidth, kBlinkHeight, 0, 12);
             SetMouth(kMouthWidth - 20, kMouthClosedHeight, kMouthOffsetY, kMouthRadius);
+            lv_anim_t anim;
+            lv_anim_init(&anim);
+            lv_anim_set_var(&anim, mouth_);
+            lv_anim_set_exec_cb(&anim, SetHeightAnimation);
+            lv_anim_set_values(&anim, kMouthClosedHeight, kMouthClosedHeight + 4);
+            lv_anim_set_duration(&anim, kStandbyBreathMs);
+            lv_anim_set_reverse_duration(&anim, kStandbyBreathMs);
+            lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
+            lv_anim_set_path_cb(&anim, lv_anim_path_ease_in_out);
+            lv_anim_start(&anim);
             break;
+        }
         case FaceMood::kNeutral:
         default:
             SetEyes(kEyeWidth, kEyeHeight, 0, 0);
@@ -547,6 +599,9 @@ void BuddyDisplay::OpenMenuItem(int index) {
         return;
     }
     HighlightMenuItem(index);
+    if (index == kClearChatMenuIndex && controls_.reset_conversation) {
+        controls_.reset_conversation();
+    }
     ShowScreen(kMenuTargets[index]);
 }
 
@@ -610,9 +665,10 @@ void BuddyDisplay::OnMainButtonReleased() {
 }
 
 bool BuddyDisplay::BeginListening() {
-    if (sleeping_ || screen_ != BuddyScreen::kChat || thinking_) {
+    if (sleeping_ || screen_ != BuddyScreen::kChat) {
         return false;
     }
+    SetThinking(false);
     auto& app = Application::GetInstance();
     auto state = app.GetDeviceState();
     if (state != kDeviceStateIdle && state != kDeviceStateSpeaking && state != kDeviceStateListening) {
@@ -648,6 +704,9 @@ void BuddyDisplay::OnStateTick() {
         last_state_ = state;
         if (state == kDeviceStateSpeaking || state == kDeviceStateListening) {
             SetThinking(false);
+            if (sleeping_ && controls_.wake_up) {
+                controls_.wake_up();
+            }
         }
         auto mood = MoodFor(state);
         if (mood != mood_) {
@@ -748,9 +807,18 @@ void BuddyDisplay::SleepDropdownEventCallback(lv_event_t* event) {
     static_cast<BuddyDisplay*>(lv_event_get_user_data(event))->OnSleepOptionChanged();
 }
 
-void BuddyDisplay::ClearChatEventCallback(lv_event_t* event) {
+void BuddyDisplay::VolumeEventCallback(lv_event_t* event) {
     auto display = static_cast<BuddyDisplay*>(lv_event_get_user_data(event));
-    if (display->controls_.reset_conversation && !display->sleeping_) {
-        display->controls_.reset_conversation();
+    if (lv_event_get_code(event) == LV_EVENT_RELEASED && display->controls_.set_volume) {
+        display->controls_.set_volume(lv_slider_get_value(display->volume_slider_));
     }
+}
+
+void BuddyDisplay::BrightnessEventCallback(lv_event_t* event) {
+    auto display = static_cast<BuddyDisplay*>(lv_event_get_user_data(event));
+    if (!display->controls_.set_brightness) {
+        return;
+    }
+    bool persist = lv_event_get_code(event) == LV_EVENT_RELEASED;
+    display->controls_.set_brightness(lv_slider_get_value(display->brightness_slider_), persist);
 }

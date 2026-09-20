@@ -17,6 +17,7 @@ public:
     void WakeUp();
     void EnterSleepMode();
     void SetSecondsToSleep(int seconds);
+    void SetSecondsToShutdown(int seconds);
     bool IsInSleepMode() const { return in_sleep_mode_; }
 
 private:
