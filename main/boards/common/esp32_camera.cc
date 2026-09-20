@@ -124,6 +124,31 @@ bool Esp32Camera::Capture() {
         } else {
             memcpy(encode_buf_, current_fb_->buf, data_size);
         }
+        frame_width_ = current_fb_->width;
+        frame_height_ = current_fb_->height;
+
+#ifdef CONFIG_XIAOZHI_ENABLE_ROTATE_CAMERA_IMAGE
+        uint16_t* rotated = (uint16_t*)heap_caps_malloc(data_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (rotated == nullptr) {
+            ESP_LOGE(TAG, "Failed to allocate memory for rotated frame");
+            return false;
+        }
+        const uint16_t w = current_fb_->width;
+        const uint16_t h = current_fb_->height;
+        for (uint16_t y = 0; y < h; y++) {
+            for (uint16_t x = 0; x < w; x++) {
+#ifdef CONFIG_XIAOZHI_CAMERA_IMAGE_ROTATION_ANGLE_270
+                rotated[(size_t)(w - 1 - x) * h + y] = dst[(size_t)y * w + x];
+#else
+                rotated[(size_t)x * h + (h - 1 - y)] = dst[(size_t)y * w + x];
+#endif
+            }
+        }
+        heap_caps_free(encode_buf_);
+        encode_buf_ = (uint8_t*)rotated;
+        frame_width_ = h;
+        frame_height_ = w;
+#endif  // CONFIG_XIAOZHI_ENABLE_ROTATE_CAMERA_IMAGE
 
         // Allocate separate buffer for preview display
         uint8_t* preview_data =
@@ -133,8 +158,8 @@ bool Esp32Camera::Capture() {
             auto display = Board::GetInstance().GetDisplay();
             if (display != nullptr) {
                 display->SetPreviewImage(std::make_unique<LvglAllocatedImage>(
-                    preview_data, data_size, current_fb_->width, current_fb_->height,
-                    current_fb_->width * 2, LV_COLOR_FORMAT_RGB565));
+                    preview_data, data_size, frame_width_, frame_height_,
+                    frame_width_ * 2, LV_COLOR_FORMAT_RGB565));
             } else {
                 heap_caps_free(preview_data);
             }
@@ -195,6 +220,10 @@ std::expected<std::string, std::string> Esp32Camera::Explain(const std::string& 
         int64_t start_time = esp_timer_get_time();
         uint16_t w = current_fb_->width;
         uint16_t h = current_fb_->height;
+        if (current_fb_->format == PIXFORMAT_RGB565 && frame_width_ != 0) {
+            w = frame_width_;
+            h = frame_height_;
+        }
         v4l2_pix_fmt_t enc_fmt;
         switch (current_fb_->format) {
             case PIXFORMAT_RGB565:

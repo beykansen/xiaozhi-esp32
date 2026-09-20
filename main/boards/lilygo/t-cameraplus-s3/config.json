@@ -43,7 +43,9 @@
                 "CONFIG_SPIRAM_MODE_QUAD=y",
                 "CONFIG_OTA_URL=\"http://macmini-home.mrblithe.net:8710/ota/\"",
                 "CONFIG_WIFI_AP_SSID_PREFIX=\"Razzi\"",
-                "CONFIG_USE_AUDIO_PROCESSOR=n"
+                "CONFIG_USE_AUDIO_PROCESSOR=n",
+                "CONFIG_XIAOZHI_ENABLE_ROTATE_CAMERA_IMAGE=y",
+                "CONFIG_XIAOZHI_CAMERA_IMAGE_ROTATION_ANGLE_270=y"
             ]
         }
     ]

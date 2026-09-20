@@ -28,6 +28,8 @@ private:
     camera_fb_t* current_fb_ = nullptr;
     uint8_t* encode_buf_ = nullptr;  // Buffer for JPEG encoding (with optional byte swap)
     size_t encode_buf_size_ = 0;
+    uint16_t frame_width_ = 0;
+    uint16_t frame_height_ = 0;
 
 public:
     Esp32Camera(const camera_config_t& config);
