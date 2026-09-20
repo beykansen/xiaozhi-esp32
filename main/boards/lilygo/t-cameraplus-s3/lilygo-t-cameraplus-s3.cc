@@ -261,6 +261,13 @@ private:
         key1_button_.OnPressUp([this]() {
             buddy_display_->OnMainButtonReleased();
         });
+        key1_button_.OnDoubleClick([this]() {
+            if (power_save_timer_->IsInSleepMode()) {
+                return;
+            }
+            power_save_timer_->WakeUp();
+            buddy_display_->OpenMenu();
+        });
     }
 
     void InitializeCamera() {

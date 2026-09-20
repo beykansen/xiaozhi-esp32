@@ -591,6 +591,15 @@ void BuddyDisplay::OnMainButtonLongPress() {
     }
 }
 
+void BuddyDisplay::OpenMenu() {
+    DisplayLockGuard lock(this);
+    if (sleeping_ || button_listening_) {
+        return;
+    }
+    HighlightMenuItem(0);
+    ShowScreen(BuddyScreen::kMenu);
+}
+
 void BuddyDisplay::OnMainButtonReleased() {
     DisplayLockGuard lock(this);
     if (!button_listening_) {

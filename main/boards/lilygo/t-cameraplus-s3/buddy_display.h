@@ -48,6 +48,7 @@ public:
     bool OnMainButtonClick();
     void OnMainButtonLongPress();
     void OnMainButtonReleased();
+    void OpenMenu();
     bool IsBusy() const { return thinking_ || sleeping_; }
     bool IsChatScreen() const { return screen_ == BuddyScreen::kChat; }
 
