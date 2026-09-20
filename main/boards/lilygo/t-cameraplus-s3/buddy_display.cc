@@ -38,6 +38,7 @@ constexpr int kSliderHeight = 12;
 constexpr int kSliderMax = 100;
 constexpr int kSubtitleHoldMs = 800;
 constexpr int kStandbyBreathMs = 2200;
+constexpr int kImageScaleUnit = 256;
 constexpr int kThinkingEyeDrift = 7;
 constexpr int kThinkingCycleMs = 650;
 constexpr int kSubtitleMsPerChar = 90;
@@ -367,6 +368,32 @@ void BuddyDisplay::StartSubtitleScroll(const char* content) {
     lv_anim_set_delay(&anim, kSubtitleHoldMs);
     lv_anim_set_path_cb(&anim, lv_anim_path_linear);
     lv_anim_start(&anim);
+}
+
+void BuddyDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image) {
+    if (image == nullptr) {
+        LcdDisplay::SetPreviewImage(std::move(image));
+        return;
+    }
+    auto descriptor = image->image_dsc();
+    int32_t image_width = descriptor->header.w;
+    int32_t image_height = descriptor->header.h;
+    LcdDisplay::SetPreviewImage(std::move(image));
+
+    DisplayLockGuard lock(this);
+    if (preview_image_ == nullptr || top_bar_ == nullptr || image_width <= 0 || image_height <= 0) {
+        return;
+    }
+    lv_obj_update_layout(top_bar_);
+    int32_t top = lv_obj_get_height(top_bar_);
+    int32_t area_width = LV_HOR_RES;
+    int32_t area_height = LV_VER_RES - top;
+    lv_obj_set_size(preview_image_, area_width, area_height);
+    lv_obj_align(preview_image_, LV_ALIGN_TOP_MID, 0, top);
+    int32_t scale_w = kImageScaleUnit * area_width / image_width;
+    int32_t scale_h = kImageScaleUnit * area_height / image_height;
+    lv_image_set_scale(preview_image_, scale_w < scale_h ? scale_w : scale_h);
+    lv_image_set_inner_align(preview_image_, LV_IMAGE_ALIGN_CENTER);
 }
 
 void BuddyDisplay::SetPowerSaveMode(bool on) {

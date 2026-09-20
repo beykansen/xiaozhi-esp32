@@ -61,6 +61,7 @@ public:
     virtual void SetChatMessage(const char* role, const char* content) override;
     virtual void SetTheme(Theme* theme) override;
     virtual void SetPowerSaveMode(bool on) override;
+    virtual void SetPreviewImage(std::unique_ptr<LvglImage> image) override;
 
 private:
     BuddyControls controls_;
