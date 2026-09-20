@@ -341,15 +341,22 @@ void BuddyDisplay::StartSubtitleScroll(const char* content) {
     lv_anim_delete(chat_message_label_, SetTranslateXAnimation);
     lv_obj_set_style_translate_x(chat_message_label_, 0, 0);
     lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_align(chat_message_label_, LV_TEXT_ALIGN_LEFT, 0);
+    auto container = lv_obj_get_parent(chat_message_label_);
+    lv_obj_remove_flag(container, LV_OBJ_FLAG_SCROLLABLE);
+    int32_t visible_width = lv_obj_get_content_width(container);
     auto font = lv_obj_get_style_text_font(chat_message_label_, LV_PART_MAIN);
     lv_point_t size;
     lv_text_get_size(&size, content, font, lv_obj_get_style_text_letter_space(chat_message_label_, LV_PART_MAIN), 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    int32_t overflow = size.x - lv_obj_get_width(chat_message_label_);
+    int32_t overflow = size.x - visible_width;
     if (overflow <= 0) {
+        lv_obj_set_width(chat_message_label_, visible_width);
         lv_obj_set_style_text_align(chat_message_label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(chat_message_label_, LV_ALIGN_CENTER, 0, 0);
         return;
     }
+    lv_obj_set_width(chat_message_label_, size.x);
+    lv_obj_set_style_text_align(chat_message_label_, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_align(chat_message_label_, LV_ALIGN_LEFT_MID, 0, 0);
     int32_t scroll_ms = static_cast<int32_t>(strlen(content)) * kSubtitleMsPerChar;
     lv_anim_t anim;
     lv_anim_init(&anim);

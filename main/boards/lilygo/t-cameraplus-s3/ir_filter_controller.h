@@ -6,7 +6,7 @@
 
 class IrFilterController {
 private:
-    bool enable_ = false;
+    bool enable_ = true;
     gpio_num_t gpio_num_;
 
 public:
@@ -19,7 +19,7 @@ public:
             .intr_type = GPIO_INTR_DISABLE,
         };
         ESP_ERROR_CHECK(gpio_config(&config));
-        gpio_set_level(gpio_num_, 0);
+        gpio_set_level(gpio_num_, 1);
 
         auto& mcp_server = McpServer::GetInstance();
         mcp_server.AddTool("self.camera.get_ir_filter_state", "Get the state of the camera's infrared filter", PropertyList(), [this](const PropertyList& properties) -> ReturnValue {
